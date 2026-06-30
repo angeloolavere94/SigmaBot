@@ -21,8 +21,25 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 import requests
 from io import BytesIO
 import textwrap
+import shutil
 
 load_dotenv()
+
+def cleanup_files():
+    files_to_delete = [".log", ".txt", ".png", ".jpg", ".jpeg", ".pyc"]
+    for file in os.listdir("."):
+        if file != "requirements.txt" and file != ".env" and any(file.endswith(ext) for ext in files_to_delete):
+            try:
+                os.remove(file)
+                print(f"Deleted: {file}")
+            except:
+                pass
+    if os.path.exists("__pycache__"):
+        shutil.rmtree("__pycache__")
+        print("Deleted: __pycache__")
+    print("Cleanup completed!")
+
+cleanup_files()
 
 cred = credentials.Certificate({
     "type": "service_account",
@@ -606,6 +623,122 @@ async def web_screenshot(interaction: discord.Interaction, url: str):
     except Exception:
         await interaction.followup.send("Failed to take an screenshot.")
 
+def get_country_emoji(country):
+    country_flags = {
+        "United States": "🇺🇸", "US": "🇺🇸", "USA": "🇺🇸",
+        "United Kingdom": "🇬🇧", "UK": "🇬🇧", "England": "🇬🇧",
+        "Canada": "🇨🇦", "CA": "🇨🇦",
+        "Australia": "🇦🇺", "AU": "🇦🇺",
+        "Germany": "🇩🇪", "DE": "🇩🇪",
+        "France": "🇫🇷", "FR": "🇫🇷",
+        "Japan": "🇯🇵", "JP": "🇯🇵",
+        "Brazil": "🇧🇷", "BR": "🇧🇷",
+        "India": "🇮🇳", "IN": "🇮🇳",
+        "China": "🇨🇳", "CN": "🇨🇳",
+        "Russia": "🇷🇺", "RU": "🇷🇺",
+        "Italy": "🇮🇹", "IT": "🇮🇹",
+        "Spain": "🇪🇸", "ES": "🇪🇸",
+        "Mexico": "🇲🇽", "MX": "🇲🇽",
+        "South Korea": "🇰🇷", "KR": "🇰🇷",
+        "Netherlands": "🇳🇱", "NL": "🇳🇱",
+        "Sweden": "🇸🇪", "SE": "🇸🇪",
+        "Norway": "🇳🇴", "NO": "🇳🇴",
+        "Denmark": "🇩🇰", "DK": "🇩🇰",
+        "Finland": "🇫🇮", "FI": "🇫🇮",
+        "Poland": "🇵🇱", "PL": "🇵🇱",
+        "Turkey": "🇹🇷", "TR": "🇹🇷",
+        "Philippines": "🇵🇭", "PH": "🇵🇭",
+        "Indonesia": "🇮🇩", "ID": "🇮🇩",
+        "Malaysia": "🇲🇾", "MY": "🇲🇾",
+        "Singapore": "🇸🇬", "SG": "🇸🇬",
+        "New Zealand": "🇳🇿", "NZ": "🇳🇿"
+    }
+    for key in country_flags:
+        if key in country or country in key:
+            return country_flags[key]
+    return "🌍"
+
+async def create_roblox_profile_image(display_name, username, avatar_url, description, friends, followers, following, join_date, country):
+    width = 600
+    height = 500
+    background_color = (32, 32, 36)
+    
+    image = Image.new('RGB', (width, height), background_color)
+    draw = ImageDraw.Draw(image)
+    
+    try:
+        font_title = ImageFont.truetype("arialbd.ttf", 30)
+        font_display = ImageFont.truetype("arial.ttf", 20)
+        font_desc = ImageFont.truetype("arial.ttf", 16)
+        font_stats = ImageFont.truetype("arial.ttf", 22)
+        font_label = ImageFont.truetype("arial.ttf", 16)
+        font_country = ImageFont.truetype("arial.ttf", 18)
+    except:
+        try:
+            font_title = ImageFont.truetype("arial.ttf", 30)
+            font_display = ImageFont.truetype("arial.ttf", 20)
+            font_desc = ImageFont.truetype("arial.ttf", 16)
+            font_stats = ImageFont.truetype("arial.ttf", 22)
+            font_label = ImageFont.truetype("arial.ttf", 16)
+            font_country = ImageFont.truetype("arial.ttf", 18)
+        except:
+            font_title = ImageFont.load_default()
+            font_display = ImageFont.load_default()
+            font_desc = ImageFont.load_default()
+            font_stats = ImageFont.load_default()
+            font_label = ImageFont.load_default()
+            font_country = ImageFont.load_default()
+    
+    draw.rectangle([(10, 10), (width-10, height-10)], outline=(255, 200, 50), width=2)
+    
+    draw.rectangle([(5, 5), (18, 18)], fill=(255, 200, 50))
+    draw.rectangle([(width-18, 5), (width-5, 18)], fill=(255, 200, 50))
+    draw.rectangle([(5, height-18), (18, height-5)], fill=(255, 200, 50))
+    draw.rectangle([(width-18, height-18), (width-5, height-5)], fill=(255, 200, 50))
+    
+    if avatar_url:
+        try:
+            response = requests.get(avatar_url)
+            avatar_img = Image.open(BytesIO(response.content))
+            avatar_img = avatar_img.resize((120, 120), Image.Resampling.LANCZOS)
+            
+            mask = Image.new('L', (120, 120), 0)
+            mask_draw = ImageDraw.Draw(mask)
+            mask_draw.ellipse((0, 0, 120, 120), fill=255)
+            
+            avatar_img = ImageOps.fit(avatar_img, (120, 120), method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
+            avatar_img.putalpha(mask)
+            
+            image.paste(avatar_img, (40, 35), avatar_img)
+            
+            draw.ellipse((38, 33, 162, 157), outline=(255, 200, 50), width=2)
+        except:
+            draw.ellipse((40, 35, 160, 155), fill=(60, 60, 70), outline=(255, 200, 50), width=2)
+            draw.text((90, 85), "?", fill=(150, 150, 150), font=font_title, anchor="mm")
+    
+    draw.text((180, 45), f"{username}'s", fill=(255, 255, 255), font=font_title)
+    draw.text((180, 85), display_name, fill=(200, 200, 200), font=font_display)
+    
+    draw.text((40, 180), "Description:", fill=(200, 200, 200), font=font_label)
+    draw.text((150, 180), description if description else "N/A", fill=(255, 255, 255), font=font_desc)
+    
+    draw.text((40, 225), "Friends:", fill=(200, 200, 200), font=font_label)
+    draw.text((150, 225), str(friends), fill=(255, 255, 255), font=font_stats)
+    
+    draw.text((40, 270), "Followers:", fill=(200, 200, 200), font=font_label)
+    draw.text((150, 270), str(followers), fill=(255, 255, 255), font=font_stats)
+    
+    draw.text((40, 315), "Following:", fill=(200, 200, 200), font=font_label)
+    draw.text((150, 315), str(following), fill=(255, 255, 255), font=font_stats)
+    
+    country_emoji = get_country_emoji(country)
+    draw.text((40, 360), "Country:", fill=(200, 200, 200), font=font_label)
+    draw.text((150, 360), f"{country_emoji} {country}", fill=(255, 255, 255), font=font_country)
+    
+    draw.text((width-150, height-30), "SigmaBot", fill=(80, 80, 90), font=font_label)
+    
+    return image
+
 @client.tree.command(name="roblox-profile", description="Get a roblox user profile.")
 @app_commands.describe(username="Type the username or userid of user to fetch (NOT DISPLAY NAME).")
 async def roblox_profile(interaction: discord.Interaction, username: str):
@@ -702,142 +835,6 @@ async def roblox_profile(interaction: discord.Interaction, username: str):
     except Exception as e:
         print(f"[ERROR] Roblox profile error: {e}")
         await interaction.followup.send("An error occurred while fetching the profile. Please try again later.")
-
-async def create_roblox_profile_image(display_name, username, avatar_url, description, friends, followers, following, join_date, country):
-    width = 800
-    height = 600
-    background_color = (30, 30, 35)
-    
-    image = Image.new('RGB', (width, height), background_color)
-    draw = ImageDraw.Draw(image)
-    
-    try:
-        font_title = ImageFont.truetype("arialbd.ttf", 36)
-        font_username = ImageFont.truetype("arial.ttf", 22)
-        font_label = ImageFont.truetype("arialbd.ttf", 18)
-        font_value = ImageFont.truetype("arial.ttf", 20)
-        font_description = ImageFont.truetype("arial.ttf", 16)
-        font_small = ImageFont.truetype("arial.ttf", 14)
-    except:
-        try:
-            font_title = ImageFont.truetype("arial.ttf", 36)
-            font_username = ImageFont.truetype("arial.ttf", 22)
-            font_label = ImageFont.truetype("arial.ttf", 18)
-            font_value = ImageFont.truetype("arial.ttf", 20)
-            font_description = ImageFont.truetype("arial.ttf", 16)
-            font_small = ImageFont.truetype("arial.ttf", 14)
-        except:
-            font_title = ImageFont.load_default()
-            font_username = ImageFont.load_default()
-            font_label = ImageFont.load_default()
-            font_value = ImageFont.load_default()
-            font_description = ImageFont.load_default()
-            font_small = ImageFont.load_default()
-    
-    draw.rectangle([(0, 0), (width, height)], outline=(80, 80, 90), width=3)
-    draw.rectangle([(10, 10), (width-10, height-10)], outline=(60, 60, 70), width=2)
-    
-    draw.line([(30, 50), (width-30, 50)], fill=(60, 60, 70), width=1)
-    draw.line([(30, height-50), (width-30, height-50)], fill=(60, 60, 70), width=1)
-    
-    draw.rectangle([(20, 20), (35, 35)], fill=(255, 200, 50), outline=None)
-    draw.rectangle([(width-35, 20), (width-20, 35)], fill=(255, 200, 50), outline=None)
-    draw.rectangle([(20, height-35), (35, height-20)], fill=(255, 200, 50), outline=None)
-    draw.rectangle([(width-35, height-35), (width-20, height-20)], fill=(255, 200, 50), outline=None)
-    
-    if avatar_url:
-        try:
-            response = requests.get(avatar_url)
-            avatar_img = Image.open(BytesIO(response.content))
-            avatar_img = avatar_img.resize((150, 150), Image.Resampling.LANCZOS)
-            
-            mask = Image.new('L', (150, 150), 0)
-            mask_draw = ImageDraw.Draw(mask)
-            mask_draw.ellipse((0, 0, 150, 150), fill=255)
-            
-            avatar_img = ImageOps.fit(avatar_img, (150, 150), method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
-            avatar_img.putalpha(mask)
-            
-            image.paste(avatar_img, (50, 60), avatar_img)
-            
-            draw.ellipse((48, 58, 202, 212), outline=(255, 200, 50), width=3)
-        except:
-            draw.ellipse((50, 60, 200, 210), fill=(60, 60, 70), outline=(255, 200, 50), width=3)
-            draw.text((110, 110), "?", fill=(150, 150, 150), font=font_title, anchor="mm")
-    
-    draw.text((230, 70), display_name, fill=(255, 255, 255), font=font_title)
-    draw.text((230, 115), f"@{username}", fill=(180, 180, 180), font=font_username)
-    
-    wrapped_desc = textwrap.wrap(description, width=55)
-    y_offset = 170
-    for line in wrapped_desc:
-        draw.text((50, y_offset), line, fill=(200, 200, 200), font=font_description)
-        y_offset += 25
-    if not wrapped_desc:
-        draw.text((50, 170), "N/A", fill=(150, 150, 150), font=font_description)
-        y_offset = 195
-    
-    y_pos = y_offset + 30
-    
-    info_items = [
-        ("Friends", friends, 50),
-        ("Followers", followers, 250),
-        ("Following", following, 450)
-    ]
-    
-    for label, value, x_pos in info_items:
-        draw.text((x_pos, y_pos), str(value), fill=(255, 255, 255), font=font_value)
-        draw.text((x_pos, y_pos + 30), label, fill=(180, 180, 180), font=font_label)
-    
-    y_pos = y_pos + 80
-    
-    draw.text((50, y_pos), "Joined:", fill=(180, 180, 180), font=font_label)
-    draw.text((140, y_pos), join_date, fill=(255, 255, 255), font=font_value)
-    
-    y_pos = y_pos + 45
-    
-    country_emoji = get_country_emoji(country)
-    draw.text((50, y_pos), "Country:", fill=(180, 180, 180), font=font_label)
-    draw.text((140, y_pos), f"{country_emoji} {country}", fill=(255, 255, 255), font=font_value)
-    
-    draw.text((width-200, height-35), "SigmaBot", fill=(100, 100, 110), font=font_small)
-    
-    return image
-
-def get_country_emoji(country):
-    country_flags = {
-        "United States": "🇺🇸", "US": "🇺🇸", "USA": "🇺🇸",
-        "United Kingdom": "🇬🇧", "UK": "🇬🇧", "England": "🇬🇧",
-        "Canada": "🇨🇦", "CA": "🇨🇦",
-        "Australia": "🇦🇺", "AU": "🇦🇺",
-        "Germany": "🇩🇪", "DE": "🇩🇪",
-        "France": "🇫🇷", "FR": "🇫🇷",
-        "Japan": "🇯🇵", "JP": "🇯🇵",
-        "Brazil": "🇧🇷", "BR": "🇧🇷",
-        "India": "🇮🇳", "IN": "🇮🇳",
-        "China": "🇨🇳", "CN": "🇨🇳",
-        "Russia": "🇷🇺", "RU": "🇷🇺",
-        "Italy": "🇮🇹", "IT": "🇮🇹",
-        "Spain": "🇪🇸", "ES": "🇪🇸",
-        "Mexico": "🇲🇽", "MX": "🇲🇽",
-        "South Korea": "🇰🇷", "KR": "🇰🇷",
-        "Netherlands": "🇳🇱", "NL": "🇳🇱",
-        "Sweden": "🇸🇪", "SE": "🇸🇪",
-        "Norway": "🇳🇴", "NO": "🇳🇴",
-        "Denmark": "🇩🇰", "DK": "🇩🇰",
-        "Finland": "🇫🇮", "FI": "🇫🇮",
-        "Poland": "🇵🇱", "PL": "🇵🇱",
-        "Turkey": "🇹🇷", "TR": "🇹🇷",
-        "Philippines": "🇵🇭", "PH": "🇵🇭",
-        "Indonesia": "🇮🇩", "ID": "🇮🇩",
-        "Malaysia": "🇲🇾", "MY": "🇲🇾",
-        "Singapore": "🇸🇬", "SG": "🇸🇬",
-        "New Zealand": "🇳🇿", "NZ": "🇳🇿"
-    }
-    for key in country_flags:
-        if key in country or country in key:
-            return country_flags[key]
-    return "🌍"
 
 def run_lua_with_loop_detection(lua_code: str, max_repeats: int = 500):
     lua = LuaRuntime(unpack_returned_tuples=True)
