@@ -17,11 +17,12 @@ from collections import Counter
 import base64
 from urllib.parse import urlparse
 import tempfile
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageFont
 import requests
 from io import BytesIO
 import textwrap
 import shutil
+import math
 
 load_dotenv()
 
@@ -623,6 +624,126 @@ async def web_screenshot(interaction: discord.Interaction, url: str):
     except Exception:
         await interaction.followup.send("Failed to take an screenshot.")
 
+def create_profile_card(
+    username,
+    display_name,
+    desc,
+    friends,
+    followers,
+    following,
+    country,
+    profile_image_path=None,
+    output_path="profile_card.png"
+):
+    width, height = 1024, 576
+    img = Image.new("RGB", (width, height))
+    draw = ImageDraw.Draw(img)
+
+    for y in range(height):
+        ratio = y / height
+        r = int(180 * (1 - ratio) + 0 * ratio)
+        g = int(0 * (1 - ratio) + 180 * ratio)
+        b = int(255 * (1 - ratio) + 255 * ratio)
+        draw.line([(0, y), (width, y)], fill=(r, g, b))
+
+    for x in range(width):
+        ratio = x / width
+        for y in range(height):
+            r_base = int(180 * (1 - y / height))
+            g_base = int(180 * (y / height))
+            b_base = 255
+            r = int(r_base * (1 - ratio * 0.3))
+            g = int(g_base * (1 - ratio * 0.1) + 100 * ratio)
+            b = b_base
+            current = img.getpixel((x, y))
+            blended = (
+                (current[0] + r) // 2,
+                (current[1] + g) // 2,
+                (current[2] + b) // 2
+            )
+            img.putpixel((x, y), blended)
+
+    overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    odraw = ImageDraw.Draw(overlay)
+
+    def draw_diamond(d, cx, cy, size, color):
+        pts = [(cx, cy - size), (cx + size, cy), (cx, cy + size), (cx - size, cy)]
+        d.polygon(pts, outline=color, fill=None)
+
+    def draw_dot_grid(d, ox, oy, color):
+        for row in range(5):
+            for col in range(7):
+                d.ellipse([ox + col * 8, oy + row * 8, ox + col * 8 + 3, oy + row * 8 + 3], fill=color)
+
+    draw_diamond(odraw, 50, 490, 22, (0, 255, 220, 180))
+    draw_diamond(odraw, 940, 225, 30, (255, 255, 255, 200))
+    draw_diamond(odraw, 960, 480, 18, (255, 0, 220, 160))
+    draw_diamond(odraw, 130, 545, 14, (255, 255, 255, 150))
+
+    draw_dot_grid(odraw, 820, 50, (0, 255, 220, 120))
+    draw_dot_grid(odraw, 720, 500, (255, 255, 255, 100))
+
+    odraw.polygon([(0, 80), (120, 0), (140, 20), (20, 110)], fill=(0, 220, 255, 180))
+    odraw.polygon([(0, 100), (100, 0), (115, 15), (15, 115)], fill=(0, 200, 255, 100))
+
+    odraw.polygon([(width - 10, 350), (width, 320), (width, 480), (width - 60, 480)], fill=(220, 0, 255, 180))
+    odraw.polygon([(width - 50, 520), (width, 490), (width, 576), (width - 100, 576)], fill=(255, 0, 200, 160))
+
+    odraw.polygon([(150, height), (350, height - 40), (370, height), (170, height)], fill=(255, 0, 200, 150))
+
+    for i in range(3):
+        odraw.arc([900 + i * 5, 430 + i * 8, 930 + i * 5, 460 + i * 8], start=200, end=340, fill=(0, 200, 255, 150), width=2)
+
+    img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
+    draw = ImageDraw.Draw(img)
+
+    pfp_x, pfp_y, pfp_size = 60, 55, 180
+    draw.rectangle([pfp_x, pfp_y, pfp_x + pfp_size, pfp_y + pfp_size], fill=(200, 200, 200))
+
+    if profile_image_path:
+        try:
+            pfp = Image.open(profile_image_path).resize((pfp_size, pfp_size))
+            img.paste(pfp, (pfp_x, pfp_y))
+        except:
+            pass
+    else:
+        head_cx = pfp_x + pfp_size // 2
+        head_cy = pfp_y + pfp_size // 3
+        head_r = pfp_size // 6
+        draw.ellipse([head_cx - head_r, head_cy - head_r, head_cx + head_r, head_cy + head_r], fill=(150, 150, 150))
+        body_top = head_cy + head_r + 5
+        draw.ellipse(
+            [head_cx - pfp_size // 3, body_top, head_cx + pfp_size // 3, pfp_y + pfp_size + pfp_size // 3],
+            fill=(150, 150, 150)
+        )
+
+    try:
+        font_large = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 48)
+        font_medium = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 36)
+        font_body = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 32)
+    except:
+        font_large = ImageFont.load_default()
+        font_medium = font_large
+        font_body = font_large
+
+    text_x = pfp_x + pfp_size + 30
+    text_color = (10, 10, 10)
+
+    draw.text((text_x, pfp_y + 10), f"{username}'s", font=font_large, fill=text_color)
+    draw.text((text_x, pfp_y + 70), display_name, font=font_large, fill=text_color)
+
+    line_start_y = pfp_y + pfp_size + 20
+    line_gap = 48
+
+    draw.text((pfp_x, line_start_y), f"Description: {desc}", font=font_body, fill=text_color)
+    draw.text((pfp_x, line_start_y + line_gap), f"Friends: {friends}", font=font_body, fill=text_color)
+    draw.text((pfp_x, line_start_y + line_gap * 2), f"Followers: {followers}", font=font_body, fill=text_color)
+    draw.text((pfp_x, line_start_y + line_gap * 3), f"Following: {following}", font=font_body, fill=text_color)
+    draw.text((pfp_x, line_start_y + line_gap * 4), f"Country: {country}", font=font_body, fill=text_color)
+
+    img.save(output_path)
+    return img
+
 def get_country_emoji(country):
     country_flags = {
         "United States": "🇺🇸", "US": "🇺🇸", "USA": "🇺🇸",
@@ -657,87 +778,6 @@ def get_country_emoji(country):
         if key in country or country in key:
             return country_flags[key]
     return "🌍"
-
-async def create_roblox_profile_image(display_name, username, avatar_url, description, friends, followers, following, join_date, country):
-    width = 600
-    height = 500
-    background_color = (32, 32, 36)
-    
-    image = Image.new('RGB', (width, height), background_color)
-    draw = ImageDraw.Draw(image)
-    
-    try:
-        font_title = ImageFont.truetype("arialbd.ttf", 30)
-        font_display = ImageFont.truetype("arial.ttf", 20)
-        font_desc = ImageFont.truetype("arial.ttf", 16)
-        font_stats = ImageFont.truetype("arial.ttf", 22)
-        font_label = ImageFont.truetype("arial.ttf", 16)
-        font_country = ImageFont.truetype("arial.ttf", 18)
-    except:
-        try:
-            font_title = ImageFont.truetype("arial.ttf", 30)
-            font_display = ImageFont.truetype("arial.ttf", 20)
-            font_desc = ImageFont.truetype("arial.ttf", 16)
-            font_stats = ImageFont.truetype("arial.ttf", 22)
-            font_label = ImageFont.truetype("arial.ttf", 16)
-            font_country = ImageFont.truetype("arial.ttf", 18)
-        except:
-            font_title = ImageFont.load_default()
-            font_display = ImageFont.load_default()
-            font_desc = ImageFont.load_default()
-            font_stats = ImageFont.load_default()
-            font_label = ImageFont.load_default()
-            font_country = ImageFont.load_default()
-    
-    draw.rectangle([(10, 10), (width-10, height-10)], outline=(255, 200, 50), width=2)
-    
-    draw.rectangle([(5, 5), (18, 18)], fill=(255, 200, 50))
-    draw.rectangle([(width-18, 5), (width-5, 18)], fill=(255, 200, 50))
-    draw.rectangle([(5, height-18), (18, height-5)], fill=(255, 200, 50))
-    draw.rectangle([(width-18, height-18), (width-5, height-5)], fill=(255, 200, 50))
-    
-    if avatar_url:
-        try:
-            response = requests.get(avatar_url)
-            avatar_img = Image.open(BytesIO(response.content))
-            avatar_img = avatar_img.resize((120, 120), Image.Resampling.LANCZOS)
-            
-            mask = Image.new('L', (120, 120), 0)
-            mask_draw = ImageDraw.Draw(mask)
-            mask_draw.ellipse((0, 0, 120, 120), fill=255)
-            
-            avatar_img = ImageOps.fit(avatar_img, (120, 120), method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
-            avatar_img.putalpha(mask)
-            
-            image.paste(avatar_img, (40, 35), avatar_img)
-            
-            draw.ellipse((38, 33, 162, 157), outline=(255, 200, 50), width=2)
-        except:
-            draw.ellipse((40, 35, 160, 155), fill=(60, 60, 70), outline=(255, 200, 50), width=2)
-            draw.text((90, 85), "?", fill=(150, 150, 150), font=font_title, anchor="mm")
-    
-    draw.text((180, 45), f"{username}'s", fill=(255, 255, 255), font=font_title)
-    draw.text((180, 85), display_name, fill=(200, 200, 200), font=font_display)
-    
-    draw.text((40, 180), "Description:", fill=(200, 200, 200), font=font_label)
-    draw.text((150, 180), description if description else "N/A", fill=(255, 255, 255), font=font_desc)
-    
-    draw.text((40, 225), "Friends:", fill=(200, 200, 200), font=font_label)
-    draw.text((150, 225), str(friends), fill=(255, 255, 255), font=font_stats)
-    
-    draw.text((40, 270), "Followers:", fill=(200, 200, 200), font=font_label)
-    draw.text((150, 270), str(followers), fill=(255, 255, 255), font=font_stats)
-    
-    draw.text((40, 315), "Following:", fill=(200, 200, 200), font=font_label)
-    draw.text((150, 315), str(following), fill=(255, 255, 255), font=font_stats)
-    
-    country_emoji = get_country_emoji(country)
-    draw.text((40, 360), "Country:", fill=(200, 200, 200), font=font_label)
-    draw.text((150, 360), f"{country_emoji} {country}", fill=(255, 255, 255), font=font_country)
-    
-    draw.text((width-150, height-30), "SigmaBot", fill=(80, 80, 90), font=font_label)
-    
-    return image
 
 @client.tree.command(name="roblox-profile", description="Get a roblox user profile.")
 @app_commands.describe(username="Type the username or userid of user to fetch (NOT DISPLAY NAME).")
@@ -814,23 +854,36 @@ async def roblox_profile(interaction: discord.Interaction, username: str):
             if not country or country == "":
                 country = "N/A"
             
-            profile_image = await create_roblox_profile_image(
-                display_name=display_name,
+            profile_image_path = None
+            if avatar_url:
+                try:
+                    response = requests.get(avatar_url)
+                    temp_avatar = BytesIO(response.content)
+                    profile_image_path = temp_avatar
+                except:
+                    profile_image_path = None
+            
+            output_path = f"profile_{user_id}.png"
+            create_profile_card(
                 username=username_display,
-                avatar_url=avatar_url,
-                description=description,
+                display_name=display_name,
+                desc=description,
                 friends=friends_count,
                 followers=followers_count,
                 following=following_count,
-                join_date=join_date,
-                country=country
+                country=f"{get_country_emoji(country)} {country}",
+                profile_image_path=profile_image_path,
+                output_path=output_path
             )
             
-            with BytesIO() as image_binary:
-                profile_image.save(image_binary, 'PNG')
-                image_binary.seek(0)
-                file = discord.File(fp=image_binary, filename='roblox_profile.png')
+            with open(output_path, 'rb') as f:
+                file = discord.File(f, filename='roblox_profile.png')
                 await interaction.followup.send(file=file)
+            
+            try:
+                os.remove(output_path)
+            except:
+                pass
             
     except Exception as e:
         print(f"[ERROR] Roblox profile error: {e}")
