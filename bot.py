@@ -17,7 +17,7 @@ from collections import Counter
 import base64
 from urllib.parse import urlparse
 import tempfile
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 import requests
 from io import BytesIO
 import textwrap
@@ -624,6 +624,41 @@ async def web_screenshot(interaction: discord.Interaction, url: str):
     except Exception:
         await interaction.followup.send("Failed to take an screenshot.")
 
+def get_country_emoji(country):
+    country_flags = {
+        "United States": "🇺🇸", "US": "🇺🇸", "USA": "🇺🇸",
+        "United Kingdom": "🇬🇧", "UK": "🇬🇧", "England": "🇬🇧",
+        "Canada": "🇨🇦", "CA": "🇨🇦",
+        "Australia": "🇦🇺", "AU": "🇦🇺",
+        "Germany": "🇩🇪", "DE": "🇩🇪",
+        "France": "🇫🇷", "FR": "🇫🇷",
+        "Japan": "🇯🇵", "JP": "🇯🇵",
+        "Brazil": "🇧🇷", "BR": "🇧🇷",
+        "India": "🇮🇳", "IN": "🇮🇳",
+        "China": "🇨🇳", "CN": "🇨🇳",
+        "Russia": "🇷🇺", "RU": "🇷🇺",
+        "Italy": "🇮🇹", "IT": "🇮🇹",
+        "Spain": "🇪🇸", "ES": "🇪🇸",
+        "Mexico": "🇲🇽", "MX": "🇲🇽",
+        "South Korea": "🇰🇷", "KR": "🇰🇷",
+        "Netherlands": "🇳🇱", "NL": "🇳🇱",
+        "Sweden": "🇸🇪", "SE": "🇸🇪",
+        "Norway": "🇳🇴", "NO": "🇳🇴",
+        "Denmark": "🇩🇰", "DK": "🇩🇰",
+        "Finland": "🇫🇮", "FI": "🇫🇮",
+        "Poland": "🇵🇱", "PL": "🇵🇱",
+        "Turkey": "🇹🇷", "TR": "🇹🇷",
+        "Philippines": "🇵🇭", "PH": "🇵🇭",
+        "Indonesia": "🇮🇩", "ID": "🇮🇩",
+        "Malaysia": "🇲🇾", "MY": "🇲🇾",
+        "Singapore": "🇸🇬", "SG": "🇸🇬",
+        "New Zealand": "🇳🇿", "NZ": "🇳🇿"
+    }
+    for key in country_flags:
+        if key in country or country in key:
+            return country_flags[key]
+    return "🌍"
+
 def create_profile_card(
     username,
     display_name,
@@ -636,6 +671,7 @@ def create_profile_card(
     output_path="profile_card.png"
 ):
     width, height = 1024, 576
+    
     img = Image.new("RGB", (width, height))
     draw = ImageDraw.Draw(img)
 
@@ -702,38 +738,53 @@ def create_profile_card(
 
     if profile_image_path:
         try:
-            pfp = Image.open(profile_image_path).resize((pfp_size, pfp_size))
-            img.paste(pfp, (pfp_x, pfp_y))
-        except:
-            pass
+            if isinstance(profile_image_path, BytesIO):
+                pfp = Image.open(profile_image_path).resize((pfp_size, pfp_size))
+            else:
+                pfp = Image.open(profile_image_path).resize((pfp_size, pfp_size))
+            
+            mask = Image.new('L', (pfp_size, pfp_size), 0)
+            mask_draw = ImageDraw.Draw(mask)
+            mask_draw.ellipse((0, 0, pfp_size, pfp_size), fill=255)
+            
+            pfp = ImageOps.fit(pfp, (pfp_size, pfp_size), method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
+            pfp.putalpha(mask)
+            
+            img.paste(pfp, (pfp_x, pfp_y), pfp)
+            draw.ellipse([pfp_x - 2, pfp_y - 2, pfp_x + pfp_size + 2, pfp_y + pfp_size + 2], outline=(255, 200, 50), width=3)
+        except Exception as e:
+            print(f"Error loading profile image: {e}")
+            draw.ellipse([pfp_x, pfp_y, pfp_x + pfp_size, pfp_y + pfp_size], fill=(150, 150, 150))
+            draw.ellipse([pfp_x - 2, pfp_y - 2, pfp_x + pfp_size + 2, pfp_y + pfp_size + 2], outline=(255, 200, 50), width=3)
     else:
-        head_cx = pfp_x + pfp_size // 2
-        head_cy = pfp_y + pfp_size // 3
-        head_r = pfp_size // 6
-        draw.ellipse([head_cx - head_r, head_cy - head_r, head_cx + head_r, head_cy + head_r], fill=(150, 150, 150))
-        body_top = head_cy + head_r + 5
-        draw.ellipse(
-            [head_cx - pfp_size // 3, body_top, head_cx + pfp_size // 3, pfp_y + pfp_size + pfp_size // 3],
-            fill=(150, 150, 150)
-        )
+        draw.ellipse([pfp_x, pfp_y, pfp_x + pfp_size, pfp_y + pfp_size], fill=(150, 150, 150))
+        draw.ellipse([pfp_x - 2, pfp_y - 2, pfp_x + pfp_size + 2, pfp_y + pfp_size + 2], outline=(255, 200, 50), width=3)
 
     try:
-        font_large = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 48)
-        font_medium = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 36)
-        font_body = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 32)
+        font_large = ImageFont.truetype("arialbd.ttf", 52)
+        font_display = ImageFont.truetype("arial.ttf", 38)
+        font_body = ImageFont.truetype("arial.ttf", 32)
+        font_label = ImageFont.truetype("arialbd.ttf", 32)
     except:
-        font_large = ImageFont.load_default()
-        font_medium = font_large
-        font_body = font_large
+        try:
+            font_large = ImageFont.truetype("arial.ttf", 52)
+            font_display = ImageFont.truetype("arial.ttf", 38)
+            font_body = ImageFont.truetype("arial.ttf", 32)
+            font_label = ImageFont.truetype("arial.ttf", 32)
+        except:
+            font_large = ImageFont.load_default()
+            font_display = ImageFont.load_default()
+            font_body = ImageFont.load_default()
+            font_label = ImageFont.load_default()
 
     text_x = pfp_x + pfp_size + 30
     text_color = (10, 10, 10)
 
-    draw.text((text_x, pfp_y + 10), f"{username}'s", font=font_large, fill=text_color)
-    draw.text((text_x, pfp_y + 70), display_name, font=font_large, fill=text_color)
+    draw.text((text_x, pfp_y + 5), f"{username}'s", font=font_large, fill=text_color)
+    draw.text((text_x, pfp_y + 65), display_name, font=font_display, fill=text_color)
 
-    line_start_y = pfp_y + pfp_size + 20
-    line_gap = 48
+    line_start_y = pfp_y + pfp_size + 30
+    line_gap = 42
 
     draw.text((pfp_x, line_start_y), f"Description: {desc}", font=font_body, fill=text_color)
     draw.text((pfp_x, line_start_y + line_gap), f"Friends: {friends}", font=font_body, fill=text_color)
@@ -743,41 +794,6 @@ def create_profile_card(
 
     img.save(output_path)
     return img
-
-def get_country_emoji(country):
-    country_flags = {
-        "United States": "🇺🇸", "US": "🇺🇸", "USA": "🇺🇸",
-        "United Kingdom": "🇬🇧", "UK": "🇬🇧", "England": "🇬🇧",
-        "Canada": "🇨🇦", "CA": "🇨🇦",
-        "Australia": "🇦🇺", "AU": "🇦🇺",
-        "Germany": "🇩🇪", "DE": "🇩🇪",
-        "France": "🇫🇷", "FR": "🇫🇷",
-        "Japan": "🇯🇵", "JP": "🇯🇵",
-        "Brazil": "🇧🇷", "BR": "🇧🇷",
-        "India": "🇮🇳", "IN": "🇮🇳",
-        "China": "🇨🇳", "CN": "🇨🇳",
-        "Russia": "🇷🇺", "RU": "🇷🇺",
-        "Italy": "🇮🇹", "IT": "🇮🇹",
-        "Spain": "🇪🇸", "ES": "🇪🇸",
-        "Mexico": "🇲🇽", "MX": "🇲🇽",
-        "South Korea": "🇰🇷", "KR": "🇰🇷",
-        "Netherlands": "🇳🇱", "NL": "🇳🇱",
-        "Sweden": "🇸🇪", "SE": "🇸🇪",
-        "Norway": "🇳🇴", "NO": "🇳🇴",
-        "Denmark": "🇩🇰", "DK": "🇩🇰",
-        "Finland": "🇫🇮", "FI": "🇫🇮",
-        "Poland": "🇵🇱", "PL": "🇵🇱",
-        "Turkey": "🇹🇷", "TR": "🇹🇷",
-        "Philippines": "🇵🇭", "PH": "🇵🇭",
-        "Indonesia": "🇮🇩", "ID": "🇮🇩",
-        "Malaysia": "🇲🇾", "MY": "🇲🇾",
-        "Singapore": "🇸🇬", "SG": "🇸🇬",
-        "New Zealand": "🇳🇿", "NZ": "🇳🇿"
-    }
-    for key in country_flags:
-        if key in country or country in key:
-            return country_flags[key]
-    return "🌍"
 
 @client.tree.command(name="roblox-profile", description="Get a roblox user profile.")
 @app_commands.describe(username="Type the username or userid of user to fetch (NOT DISPLAY NAME).")
@@ -858,8 +874,7 @@ async def roblox_profile(interaction: discord.Interaction, username: str):
             if avatar_url:
                 try:
                     response = requests.get(avatar_url)
-                    temp_avatar = BytesIO(response.content)
-                    profile_image_path = temp_avatar
+                    profile_image_path = BytesIO(response.content)
                 except:
                     profile_image_path = None
             
