@@ -28,340 +28,6 @@ import sys
 
 load_dotenv()
 
-LUA_SIGNATURE = b"\x1bLua"
-LUAC_VERSION = 0x51
-
-OPNAMES = [
-    "MOVE", "LOADK", "LOADBOOL", "LOADNIL", "GETUPVAL",
-    "GETGLOBAL", "GETTABLE", "SETGLOBAL", "SETUPVAL", "SETTABLE",
-    "NEWTABLE", "SELF", "ADD", "SUB", "MUL", "DIV", "MOD", "POW",
-    "UNM", "NOT", "LEN", "CONCAT", "JMP", "EQ", "LT", "LE",
-    "TEST", "TESTSET", "CALL", "TAILCALL", "RETURN", "FORLOOP",
-    "FORPREP", "TFORLOOP", "SETLIST", "CLOSE", "CLOSURE", "VARARG",
-]
-
-OP_MODE_ABC = 0
-OP_MODE_ABx = 1
-OP_MODE_AsBx = 2
-
-OPMODES = [
-    OP_MODE_ABC, OP_MODE_ABx, OP_MODE_ABC, OP_MODE_ABC, OP_MODE_ABC,
-    OP_MODE_ABx, OP_MODE_ABC, OP_MODE_ABx, OP_MODE_ABC, OP_MODE_ABC,
-    OP_MODE_ABC, OP_MODE_ABC, OP_MODE_ABC, OP_MODE_ABC, OP_MODE_ABC,
-    OP_MODE_ABC, OP_MODE_ABC, OP_MODE_ABC, OP_MODE_ABC, OP_MODE_ABC,
-    OP_MODE_ABC, OP_MODE_ABC, OP_MODE_AsBx, OP_MODE_ABC, OP_MODE_ABC,
-    OP_MODE_ABC, OP_MODE_ABC, OP_MODE_ABC, OP_MODE_ABC, OP_MODE_ABC,
-    OP_MODE_ABC, OP_MODE_AsBx, OP_MODE_AsBx, OP_MODE_ABC, OP_MODE_ABC,
-    OP_MODE_ABC, OP_MODE_ABx, OP_MODE_ABC,
-]
-
-MAXARG_Bx = 0x3FFFF
-MAXARG_sBx = MAXARG_Bx >> 1
-
-class LuaDecoder:
-    def __init__(self, data):
-        self.data = data
-        self.offset = 0
-        self.endian = "<"
-        self.int_size = 4
-        self.sizet_size = 4
-        self.instr_size = 4
-        self.number_size = 8
-        self.integral = 0
-
-    def read_bytes(self, n):
-        chunk = self.data[self.offset:self.offset + n]
-        self.offset += n
-        return chunk
-
-    def read_byte(self):
-        return struct.unpack("B", self.read_bytes(1))[0]
-
-    def read_int(self):
-        fmt = (self.endian + "I") if self.int_size == 4 else (self.endian + "Q")
-        return struct.unpack(fmt, self.read_bytes(self.int_size))[0]
-
-    def read_sizet(self):
-        fmt = (self.endian + "I") if self.sizet_size == 4 else (self.endian + "Q")
-        return struct.unpack(fmt, self.read_bytes(self.sizet_size))[0]
-
-    def read_number(self):
-        if self.integral:
-            fmt = self.endian + ("i" if self.number_size == 4 else "q")
-        else:
-            fmt = self.endian + ("f" if self.number_size == 4 else "d")
-        return struct.unpack(fmt, self.read_bytes(self.number_size))[0]
-
-    def read_string(self):
-        size = self.read_sizet()
-        if size == 0:
-            return None
-        raw = self.read_bytes(size)
-        return raw[:-1].decode("utf-8", errors="replace")
-
-    def read_instruction(self):
-        raw = struct.unpack(self.endian + "I", self.read_bytes(4))[0]
-        return raw
-
-    def decode_instruction(self, raw):
-        op = raw & 0x3F
-        a = (raw >> 6) & 0xFF
-        b = (raw >> 23) & 0x1FF
-        c = (raw >> 14) & 0x1FF
-        bx = (raw >> 14) & 0x3FFFF
-        sbx = bx - MAXARG_sBx
-        return op, a, b, c, bx, sbx
-
-    def parse_header(self):
-        sig = self.read_bytes(4)
-        if sig != LUA_SIGNATURE:
-            raise ValueError("Not a Lua bytecode file (bad signature)")
-        version = self.read_byte()
-        if version != LUAC_VERSION:
-            raise ValueError(f"Expected Lua 5.1 (0x51), got 0x{version:02X}")
-        _fmt = self.read_byte()
-        endian_byte = self.read_byte()
-        self.endian = "<" if endian_byte == 1 else ">"
-        self.int_size = self.read_byte()
-        self.sizet_size = self.read_byte()
-        self.instr_size = self.read_byte()
-        self.number_size = self.read_byte()
-        self.integral = self.read_byte()
-
-    def parse_function(self):
-        func = {}
-        func["source"] = self.read_string()
-        func["line_def"] = self.read_int()
-        func["last_line"] = self.read_int()
-        func["nupvals"] = self.read_byte()
-        func["nparams"] = self.read_byte()
-        func["is_vararg"] = self.read_byte()
-        func["maxstack"] = self.read_byte()
-
-        n_code = self.read_int()
-        func["code"] = [self.read_instruction() for _ in range(n_code)]
-
-        n_const = self.read_int()
-        constants = []
-        for _ in range(n_const):
-            t = self.read_byte()
-            if t == 0:
-                constants.append(None)
-            elif t == 1:
-                constants.append(bool(self.read_byte()))
-            elif t == 3:
-                constants.append(self.read_number())
-            elif t == 4:
-                constants.append(self.read_string())
-        func["constants"] = constants
-
-        n_protos = self.read_int()
-        func["protos"] = [self.parse_function() for _ in range(n_protos)]
-
-        n_lines = self.read_int()
-        func["lines"] = [self.read_int() for _ in range(n_lines)]
-
-        n_locals = self.read_int()
-        locals_ = []
-        for _ in range(n_locals):
-            name = self.read_string()
-            startpc = self.read_int()
-            endpc = self.read_int()
-            locals_.append({"name": name, "start": startpc, "end": endpc})
-        func["locals"] = locals_
-
-        n_upvals = self.read_int()
-        func["upvalues"] = [self.read_string() for _ in range(n_upvals)]
-
-        return func
-
-    def decode(self):
-        self.parse_header()
-        return self.parse_function()
-
-def format_rk(idx, constants):
-    if idx >= 256:
-        k = constants[idx - 256]
-        if k is None:
-            return "nil"
-        if isinstance(k, bool):
-            return "true" if k else "false"
-        if isinstance(k, str):
-            return repr(k)
-        return str(k)
-    return f"R[{idx}]"
-
-def disassemble_function(func, out, depth=0):
-    indent = "  " * depth
-    src = func["source"] or "?"
-    line_def = func["line_def"]
-    last = func["last_line"]
-    nparams = func["nparams"]
-    nupvals = func["nupvals"]
-    vararg = func["is_vararg"]
-    maxstack = func["maxstack"]
-
-    out.append(f"{indent}function <{src}:{line_def},{last}> ({len(func['code'])} instructions)")
-    out.append(f"{indent}  params={nparams}  upvalues={nupvals}  vararg={vararg}  maxstack={maxstack}")
-    out.append("")
-
-    constants = func["constants"]
-    lines = func["lines"]
-
-    out.append(f"{indent}  -- Constants ({len(constants)}) --")
-    for i, c in enumerate(constants):
-        if c is None:
-            out.append(f"{indent}  K[{i}] = nil")
-        elif isinstance(c, bool):
-            out.append(f"{indent}  K[{i}] = {'true' if c else 'false'}")
-        elif isinstance(c, str):
-            out.append(f"{indent}  K[{i}] = {repr(c)}")
-        else:
-            out.append(f"{indent}  K[{i}] = {c}")
-    out.append("")
-
-    if func["upvalues"]:
-        out.append(f"{indent}  -- Upvalues ({len(func['upvalues'])}) --")
-        for i, u in enumerate(func["upvalues"]):
-            out.append(f"{indent}  U[{i}] = {u}")
-        out.append("")
-
-    if func["locals"]:
-        out.append(f"{indent}  -- Locals ({len(func['locals'])}) --")
-        for i, loc in enumerate(func["locals"]):
-            out.append(f"{indent}  L[{i}] = {loc['name']}  (pc {loc['start']}..{loc['end']})")
-        out.append("")
-
-    out.append(f"{indent}  -- Instructions --")
-    for pc, raw in enumerate(func["code"]):
-        op, a, b, c, bx, sbx = disassemble_instruction(raw)
-        opname = OPNAMES[op] if op < len(OPNAMES) else f"OP_{op}"
-        line = lines[pc] if pc < len(lines) else "?"
-        asm = format_instruction(opname, op, a, b, c, bx, sbx, constants)
-        out.append(f"{indent}  [{pc+1:4d}] (line {line:4}) {asm}")
-
-    out.append("")
-
-    for i, proto in enumerate(func["protos"]):
-        out.append(f"{indent}  -- Nested function #{i} --")
-        disassemble_function(proto, out, depth + 1)
-
-def disassemble_instruction(raw):
-    op = raw & 0x3F
-    a = (raw >> 6) & 0xFF
-    b = (raw >> 23) & 0x1FF
-    c = (raw >> 14) & 0x1FF
-    bx = (raw >> 14) & 0x3FFFF
-    sbx = bx - MAXARG_sBx
-    return op, a, b, c, bx, sbx
-
-def format_instruction(opname, op, a, b, c, bx, sbx, constants):
-    mode = OPMODES[op] if op < len(OPMODES) else OP_MODE_ABC
-
-    if opname == "MOVE":
-        return f"MOVE       R[{a}] = R[{b}]"
-    if opname == "LOADK":
-        k = constants[bx] if bx < len(constants) else "?"
-        return f"LOADK      R[{a}] = {repr(k) if isinstance(k,str) else k}"
-    if opname == "LOADBOOL":
-        val = "true" if b else "false"
-        skip = "  ; skip next" if c else ""
-        return f"LOADBOOL   R[{a}] = {val}{skip}"
-    if opname == "LOADNIL":
-        return f"LOADNIL    R[{a}] .. R[{b}] = nil"
-    if opname == "GETUPVAL":
-        return f"GETUPVAL   R[{a}] = U[{b}]"
-    if opname == "GETGLOBAL":
-        k = constants[bx] if bx < len(constants) else "?"
-        return f"GETGLOBAL  R[{a}] = G[{repr(k) if isinstance(k,str) else k}]"
-    if opname == "GETTABLE":
-        return f"GETTABLE   R[{a}] = R[{b}][{format_rk(c, constants)}]"
-    if opname == "SETGLOBAL":
-        k = constants[bx] if bx < len(constants) else "?"
-        return f"SETGLOBAL  G[{repr(k) if isinstance(k,str) else k}] = R[{a}]"
-    if opname == "SETUPVAL":
-        return f"SETUPVAL   U[{b}] = R[{a}]"
-    if opname == "SETTABLE":
-        return f"SETTABLE   R[{a}][{format_rk(b, constants)}] = {format_rk(c, constants)}"
-    if opname == "NEWTABLE":
-        return f"NEWTABLE   R[{a}] = {{}} (array={b}, hash={c})"
-    if opname == "SELF":
-        return f"SELF       R[{a+1}] = R[{b}]; R[{a}] = R[{b}][{format_rk(c, constants)}]"
-    if opname in ("ADD","SUB","MUL","DIV","MOD","POW"):
-        return f"{opname:<10} R[{a}] = {format_rk(b, constants)} {op_symbol(opname)} {format_rk(c, constants)}"
-    if opname == "UNM":
-        return f"UNM        R[{a}] = -R[{b}]"
-    if opname == "NOT":
-        return f"NOT        R[{a}] = not R[{b}]"
-    if opname == "LEN":
-        return f"LEN        R[{a}] = #R[{b}]"
-    if opname == "CONCAT":
-        return f"CONCAT     R[{a}] = R[{b}] .. ... .. R[{c}]"
-    if opname == "JMP":
-        return f"JMP        pc += {sbx}  (-> {sbx})"
-    if opname == "EQ":
-        return f"EQ         if ({format_rk(b, constants)} == {format_rk(c, constants)}) ~= {bool(a)} then skip"
-    if opname == "LT":
-        return f"LT         if ({format_rk(b, constants)} < {format_rk(c, constants)}) ~= {bool(a)} then skip"
-    if opname == "LE":
-        return f"LE         if ({format_rk(b, constants)} <= {format_rk(c, constants)}) ~= {bool(a)} then skip"
-    if opname == "TEST":
-        return f"TEST       if R[{a}] as bool ~= {bool(c)} then skip"
-    if opname == "TESTSET":
-        return f"TESTSET    if R[{b}] as bool == {bool(c)} then R[{a}]=R[{b}] else skip"
-    if opname == "CALL":
-        args = f"{b-1} args" if b > 0 else "vararg"
-        rets = f"{c-1} returns" if c > 0 else "varret"
-        return f"CALL       R[{a}]({args}) -> {rets}"
-    if opname == "TAILCALL":
-        args = f"{b-1} args" if b > 0 else "vararg"
-        return f"TAILCALL   return R[{a}]({args})"
-    if opname == "RETURN":
-        rets = f"{b-1} values" if b > 0 else "varret"
-        return f"RETURN     return {rets} from R[{a}]"
-    if opname == "FORLOOP":
-        return f"FORLOOP    R[{a}] += R[{a+2}]; if R[{a}] <= R[{a+1}] then pc += {sbx}"
-    if opname == "FORPREP":
-        return f"FORPREP    R[{a}] -= R[{a+2}]; pc += {sbx}"
-    if opname == "TFORLOOP":
-        return f"TFORLOOP   R[{a+2}]..R[{a+2+c}] = R[{a}](R[{a+1}],R[{a+2}]); if R[{a+2}] ~= nil then R[{a+1}]=R[{a+2}]"
-    if opname == "SETLIST":
-        return f"SETLIST    R[{a}][({bx//50}*50)+1..] = R[{a+1}].."
-    if opname == "CLOSE":
-        return f"CLOSE      close upvalues up to R[{a}]"
-    if opname == "CLOSURE":
-        return f"CLOSURE    R[{a}] = proto[{bx}]"
-    if opname == "VARARG":
-        rets = f"{b-1}" if b > 0 else "all"
-        return f"VARARG     R[{a}]..R[{a+b-2}] = vararg ({rets})"
-
-    if mode == OP_MODE_ABx:
-        return f"{opname:<10} A={a} Bx={bx}"
-    if mode == OP_MODE_AsBx:
-        return f"{opname:<10} A={a} sBx={sbx}"
-    return f"{opname:<10} A={a} B={b} C={c}"
-
-def op_symbol(name):
-    return {
-        "ADD": "+", "SUB": "-", "MUL": "*",
-        "DIV": "/", "MOD": "%", "POW": "^",
-    }.get(name, "?")
-
-def decode_lua_bytecode(data):
-    decoder = LuaDecoder(data)
-    try:
-        top = decoder.decode()
-    except ValueError as e:
-        raise ValueError(f"Decode error: {e}")
-
-    out = []
-    out.append(f"Lua 5.1 Bytecode Decoder")
-    out.append(f"Size : {len(data)} bytes")
-    out.append("=" * 60)
-    out.append("")
-    disassemble_function(top, out, depth=0)
-    return "\n".join(out)
-
 def cleanup_files():
     files_to_delete = [".log", ".txt", ".png", ".jpg", ".jpeg", ".pyc"]
     for file in os.listdir("."):
@@ -1240,59 +906,6 @@ async def roblox_profile(interaction: discord.Interaction, username: str):
         print(f"[ERROR] Roblox profile error: {e}")
         await interaction.followup.send("An error occurred while fetching the profile. Please try again later.")
 
-@client.tree.command(name="lua-decode", description="Decode a lua bytecode file.")
-@app_commands.describe(
-    url="Send as url.",
-    file="Attach only a .lua or .txt file."
-)
-async def lua_decode(interaction: discord.Interaction, url: str = None, file: discord.Attachment = None):
-    await interaction.response.defer(ephemeral=False)
-
-    if (url and file) or (not url and not file):
-        await interaction.followup.send("Failed to decode, it seems you choose both options please double check.")
-        return
-
-    lua_data = None
-
-    try:
-        if url:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url) as resp:
-                    if resp.status != 200:
-                        await interaction.followup.send("Failed to fetch the URL. Please check if the link is valid.")
-                        return
-                    lua_data = await resp.read()
-        elif file:
-            if not file.filename.lower().endswith((".lua", ".txt", ".luac")):
-                await interaction.followup.send("Only .lua, .txt, or .luac files are allowed!")
-                return
-            lua_data = await file.read()
-
-        if not lua_data or len(lua_data) == 0:
-            await interaction.followup.send("The provided file is empty or invalid.")
-            return
-
-        try:
-            decoded_output = decode_lua_bytecode(lua_data)
-        except ValueError as e:
-            await interaction.followup.send(f"Decode error: {e}")
-            return
-
-        result_content = f"=== LUA BYTECODE DECODER ===\n\n"
-        result_content += f"File Size: {len(lua_data)} bytes\n"
-        result_content += f"{'='*60}\n\n"
-        result_content += decoded_output
-
-        file_obj = discord.File(io.BytesIO(result_content.encode("utf-8")), filename="lua-dec.result")
-        await interaction.followup.send(file=file_obj)
-
-    except aiohttp.ClientError:
-        await interaction.followup.send("Failed to fetch the URL. Please check if the link is valid.")
-    except UnicodeDecodeError:
-        await interaction.followup.send("Failed to decode the file. Please make sure it's a valid Lua bytecode file.")
-    except Exception as e:
-        await interaction.followup.send(f"An error occurred while decoding the Lua bytecode: {e}")
-
 def run_lua_with_loop_detection(lua_code: str, max_repeats: int = 500):
     lua = LuaRuntime(unpack_returned_tuples=True)
     output_buffer = []
@@ -1760,5 +1373,75 @@ async def edt_ticket_panel(interaction: discord.Interaction):
 async def edt_ticket_panel_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, app_commands.MissingPermissions):
         await interaction.response.send_message("You do not have permission to use this command!", ephemeral=True)
+
+@client.tree.command(name="lua-decode", description="Decode a lua code.")
+@app_commands.describe(
+    url="Send as url.",
+    file="Attach only a .lua or .txt file."
+)
+async def lua_decode(interaction: discord.Interaction, url: str = None, file: discord.Attachment = None):
+    await interaction.response.defer(ephemeral=False)
+
+    if (url and file) or (not url and not file):
+        await interaction.followup.send("Failed to decode, it seems you choose both options please double check.")
+        return
+
+    lua_code = ""
+
+    try:
+        if url:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as resp:
+                    if resp.status != 200:
+                        await interaction.followup.send("Failed to fetch the URL. Please check if the link is valid.")
+                        return
+                    lua_code = await resp.text()
+        elif file:
+            if not file.filename.lower().endswith((".lua", ".txt")):
+                await interaction.followup.send("Only .lua or .txt files are allowed!")
+                return
+            file_bytes = await file.read()
+            lua_code = file_bytes.decode("utf-8")
+
+        if not lua_code or lua_code.strip() == "":
+            await interaction.followup.send("The provided Lua code is empty or invalid.")
+            return
+
+        lua = LuaRuntime(unpack_returned_tuples=True)
+        output_buffer = []
+
+        def custom_print(*args):
+            output_buffer.append(" ".join(str(arg) for arg in args))
+        lua.globals().print = custom_print
+
+        try:
+            result = lua.execute(lua_code)
+            if result is not None and not output_buffer:
+                output_buffer.append(str(result))
+        except LuaError as e:
+            error_msg = str(e)
+            result_content = f"=== LUA DECODE ERROR ===\n\n"
+            result_content += f"INPUT CODE:\n{'-'*40}\n{lua_code}\n\n"
+            result_content += f"ERROR:\n{'-'*40}\n{error_msg}"
+            
+            file_obj = discord.File(io.BytesIO(result_content.encode("utf-8")), filename="lua-dec.result")
+            await interaction.followup.send("Successfully decoded! Check the result below:", file=file_obj)
+            return
+
+        output_text = "\n".join(output_buffer) if output_buffer else "Script executed successfully with no output."
+        
+        result_content = f"=== LUA DECODE RESULT ===\n\n"
+        result_content += f"INPUT CODE:\n{'-'*40}\n{lua_code}\n\n"
+        result_content += f"OUTPUT:\n{'-'*40}\n{output_text}"
+
+        file_obj = discord.File(io.BytesIO(result_content.encode("utf-8")), filename="lua-dec.result")
+        await interaction.followup.send("Successfully decoded! Check the result below:", file=file_obj)
+
+    except aiohttp.ClientError:
+        await interaction.followup.send("Failed to fetch the URL. Please check if the link is valid.")
+    except UnicodeDecodeError:
+        await interaction.followup.send("Failed to decode the file. Please make sure it's a text file with UTF-8 encoding.")
+    except Exception as e:
+        await interaction.followup.send(f"An error occurred while decoding the Lua code: {e}")
 
 client.run(os.getenv("TOKEN"))
