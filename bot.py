@@ -28,6 +28,8 @@ import sys
 
 load_dotenv()
 
+afk_users = {}
+
 def cleanup_files():
     files_to_delete = [".log", ".txt", ".png", ".jpg", ".jpeg", ".pyc"]
     for file in os.listdir("."):
@@ -79,6 +81,40 @@ class BotClient(discord.Client):
     async def on_message(self, message):
         if message.author.bot:
             return
+
+        user_id = str(message.author.id)
+        if user_id in afk_users:
+            embed = discord.Embed(
+                title="Welcome Back!",
+                description=f"{message.author.mention} you are no longer AFK!",
+                color=0x00FF00
+            )
+            await message.channel.send(embed=embed)
+            del afk_users[user_id]
+
+        for mention in message.mentions:
+            mention_id = str(mention.id)
+            if mention_id in afk_users:
+                afk_data = afk_users[mention_id]
+                time_ago = datetime.now() - afk_data["time"]
+                minutes = int(time_ago.total_seconds() / 60)
+                seconds = int(time_ago.total_seconds() % 60)
+                
+                if minutes > 0:
+                    time_display = f"{minutes}m {seconds}s ago"
+                else:
+                    time_display = f"{seconds}s ago"
+                
+                embed = discord.Embed(
+                    title="AFK User Mentioned",
+                    description=f"{mention.mention} is currently AFK!",
+                    color=0xFF0000
+                )
+                embed.add_field(name="Reason", value=afk_data["reason"], inline=False)
+                embed.add_field(name="Last Active", value=time_display, inline=False)
+                
+                await message.channel.send(embed=embed)
+                break
 
         if message.content.strip() == "!server-list":
             app_info = await self.application_info()
@@ -1444,8 +1480,6 @@ async def lua_decode(interaction: discord.Interaction, url: str = None, file: di
     except Exception as e:
         await interaction.followup.send(f"An error occurred while decoding the Lua code: {e}")
 
-        afk_users = {}
-
 @client.tree.command(name="afk", description="Set your status as afk.")
 @app_commands.describe(reason="Why are you going to set your status afk? (Optional)")
 async def afk(interaction: discord.Interaction, reason: str = None):
@@ -1467,122 +1501,5 @@ async def afk(interaction: discord.Interaction, reason: str = None):
     embed.set_footer(text=f"ID: {interaction.user.id}")
     
     await interaction.response.send_message(embed=embed)
-
-@client.event
-async def on_message(message):
-    if message.author.bot:
-        return
-
-    user_id = str(message.author.id)
-    if user_id in afk_users:
-        embed = discord.Embed(
-            title="Welcome Back!",
-            description=f"{message.author.mention} you are no longer AFK!",
-            color=0x00FF00
-        )
-        await message.channel.send(embed=embed)
-        del afk_users[user_id]
-
-    for mention in message.mentions:
-        mention_id = str(mention.id)
-        if mention_id in afk_users:
-            afk_data = afk_users[mention_id]
-            time_ago = datetime.now() - afk_data["time"]
-            minutes = int(time_ago.total_seconds() / 60)
-            seconds = int(time_ago.total_seconds() % 60)
-            
-            if minutes > 0:
-                time_display = f"{minutes}m {seconds}s ago"
-            else:
-                time_display = f"{seconds}s ago"
-            
-            embed = discord.Embed(
-                title="AFK User Mentioned",
-                description=f"{mention.mention} is currently AFK!",
-                color=0xFF0000
-            )
-            embed.add_field(name="Reason", value=afk_data["reason"], inline=False)
-            embed.add_field(name="Last Active", value=time_display, inline=False)
-            
-            await message.channel.send(embed=embed)
-            break
-
-    if message.content.strip() == "!server-list":
-        app_info = await client.application_info()
-        if message.author.id != app_info.owner.id:
-            return
-        try:
-            await message.delete()
-        except discord.Forbidden:
-            pass
-
-        total_servers = len(client.guilds)
-        output = io.StringIO()
-        output.write(f"=========================================\n")
-        output.write(f"TOTAL SERVERS: {total_servers}\n")
-        output.write(f"=========================================\n\n")
-
-        for index, guild in enumerate(client.guilds, start=1):
-            invite_link = "No Permission to Create Invite"
-            try:
-                if guild.text_channels:
-                    for channel in guild.text_channels:
-                        perms = channel.permissions_for(guild.me)
-                        if perms.create_instant_invite:
-                            invite = await channel.create_invite(max_age=0, max_uses=0)
-                            invite_link = invite.url
-                            break
-            except Exception:
-                pass
-
-            icon_url = guild.icon.url if guild.icon else "No Icon"
-            output.write(f"[{index}] SERVER PROFILE\n")
-            output.write(f" Name: {guild.name}\n")
-            output.write(f" ID: {guild.id}\n")
-            output.write(f" Members: {guild.member_count}\n")
-            output.write(f" Icon: {icon_url}\n")
-            output.write(f" Link: {invite_link}\n")
-            output.write(f"{'-'*40}\n")
-
-        output.seek(0)
-        file_to_send = discord.File(fp=io.BytesIO(output.getvalue().encode('utf-8')), filename="server_list.txt")
-        try:
-            await message.author.send(content="SigmaBot | Server Guilds", file=file_to_send)
-        except discord.Forbidden:
-            print("[WARNING] Cannot send to owner.")
-
-    doc_ref = db.collection("sticky").document(str(message.channel.id))
-    doc = doc_ref.get()
-    if doc.exists:
-        data = doc.to_dict()
-        if data.get("enabled", True):
-            message_count = data.get("message_count", 0) + 1
-            duration = data.get("duration", 5)
-            sticky_message = data.get("message", "")
-            last_message_id = data.get("last_message_id", None)
-
-            if message_count >= duration:
-                if last_message_id:
-                    try:
-                        old_msg = await message.channel.fetch_message(int(last_message_id))
-                        await old_msg.delete()
-                    except (discord.NotFound, discord.Forbidden):
-                        pass
-                new_msg = await message.channel.send(f"**Stickied Message:**\n\n{sticky_message}")
-                doc_ref.update({
-                    "last_message_id": str(new_msg.id),
-                    "message_count": 0
-                })
-            else:
-                doc_ref.update({"message_count": message_count})
-
-    trigger_ref = db.collection("triggers").document(str(message.channel.id))
-    trigger_doc = trigger_ref.get()
-    if trigger_doc.exists:
-        trigger_data = trigger_doc.to_dict()
-        stored_trigger = trigger_data.get("trigger", "")
-        stored_response = trigger_data.get("response", "")
-        if message.content.strip().lower() == stored_trigger.strip().lower():
-            await message.channel.send(stored_response)
 
 client.run(os.getenv("TOKEN"))
