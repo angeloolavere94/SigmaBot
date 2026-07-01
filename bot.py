@@ -1372,4 +1372,68 @@ async def edt_ticket_panel_error(interaction: discord.Interaction, error: app_co
     if isinstance(error, app_commands.MissingPermissions):
         await interaction.response.send_message("You do not have permission to use this command!", ephemeral=True)
 
+@client.tree.command(name="lua-decode", description="Decode a lua code.")
+@app_commands.describe(
+    url="Send as url.",
+    file="Attach only a .lua or .txt file."
+)
+async def lua_decode(interaction: discord.Interaction, url: str = None, file: discord.Attachment = None):
+    await interaction.response.defer(ephemeral=False)
+
+    if (url and file) or (not url and not file):
+        await interaction.followup.send("Failed to decode, it seems you choose both options please double check.")
+        return
+
+    lua_code = ""
+
+    try:
+        if url:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as resp:
+                    if resp.status != 200:
+                        await interaction.followup.send("Failed to fetch the URL. Please check if the link is valid.")
+                        return
+                    lua_code = await resp.text()
+        elif file:
+            if not file.filename.lower().endswith((".lua", ".txt")):
+                await interaction.followup.send("Only .lua or .txt files are allowed!")
+                return
+            file_bytes = await file.read()
+            lua_code = file_bytes.decode("utf-8")
+
+        if not lua_code or lua_code.strip() == "":
+            await interaction.followup.send("The provided Lua code is empty or invalid.")
+            return
+
+        lua = LuaRuntime(unpack_returned_tuples=True)
+        output_buffer = []
+
+        def custom_print(*args):
+            output_buffer.append(" ".join(str(arg) for arg in args))
+        lua.globals().print = custom_print
+
+        try:
+            result = lua.execute(lua_code)
+            if result is not None and not output_buffer:
+                output_buffer.append(str(result))
+        except LuaError as e:
+            await interaction.followup.send(f"Lua error: {e}")
+            return
+
+        output_text = "\n".join(output_buffer) if output_buffer else "Script executed successfully with no output."
+        
+        result_content = f"=== LUA DECODE RESULT ===\n\n"
+        result_content += f"INPUT CODE:\n{'-'*40}\n{lua_code}\n\n"
+        result_content += f"OUTPUT:\n{'-'*40}\n{output_text}"
+
+        file_obj = discord.File(io.BytesIO(result_content.encode("utf-8")), filename="lua-dec.result")
+        await interaction.followup.send(file=file_obj)
+
+    except aiohttp.ClientError:
+        await interaction.followup.send("Failed to fetch the URL. Please check if the link is valid.")
+    except UnicodeDecodeError:
+        await interaction.followup.send("Failed to decode the file. Please make sure it's a text file with UTF-8 encoding.")
+    except Exception as e:
+        await interaction.followup.send(f"An error occurred while decoding the Lua code: {e}")
+
 client.run(os.getenv("TOKEN"))
